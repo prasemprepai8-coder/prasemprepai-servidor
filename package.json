@@ -1,0 +1,16 @@
+{
+  "name": "prasemprepai-server",
+  "version": "1.0.0",
+  "description": "Servidor de automação Pra Sempre Pai",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.7",
+    "axios": "^1.6.0",
+    "multer": "^1.4.5-lts.1",
+    "dotenv": "^16.3.1"
+  }
+}
