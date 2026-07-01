@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const nodemailer = require('nodemailer');
 const axios = require('axios');
@@ -26,32 +25,34 @@ app.get('/', (req, res) => {
   res.send('Servidor Pra Sempre Pai rodando!');
 });
 
+app.get('/debug', (req, res) => {
+  res.json({
+    token_existe: !!process.env.MP_ACCESS_TOKEN,
+    token_inicio: process.env.MP_ACCESS_TOKEN ? process.env.MP_ACCESS_TOKEN.slice(0, 10) : 'vazio',
+    email: process.env.EMAIL_USER || 'vazio'
+  });
+});
+
 app.post('/criar-pagamento', async (req, res) => {
   try {
     const { emailCliente } = req.body;
+    console.log('Criando pagamento para:', emailCliente);
+    console.log('Token existe:', !!process.env.MP_ACCESS_TOKEN);
 
     const preferencia = await axios.post(
       'https://api.mercadopago.com/checkout/preferences',
       {
-        items: [
-          {
-            title: 'Pagina Personalizada — Pra Sempre Pai',
-            quantity: 1,
-            currency_id: 'BRL',
-            unit_price: 19.90,
-          },
-        ],
-        payer: {
-          email: emailCliente,
-        },
-        payment_methods: {
-          excluded_payment_types: [{ id: 'ticket' }],
-          default_payment_method_id: 'pix',
-        },
+        items: [{
+          title: 'Pagina Personalizada - Pra Sempre Pai',
+          quantity: 1,
+          currency_id: 'BRL',
+          unit_price: 19.90,
+        }],
+        payer: { email: emailCliente },
         back_urls: {
-          success: 'https://dia-dos-pais-virid.vercel.app/?status=aprovado',
-          failure: 'https://dia-dos-pais-virid.vercel.app/?status=falhou',
-          pending: 'https://dia-dos-pais-virid.vercel.app/?status=pendente',
+          success: 'https://dia-dos-pais-html-atualizado.vercel.app/?status=aprovado',
+          failure: 'https://dia-dos-pais-html-atualizado.vercel.app/?status=falhou',
+          pending: 'https://dia-dos-pais-html-atualizado.vercel.app/?status=pendente',
         },
         auto_return: 'approved',
         notification_url: 'https://prasemprepai-servidor-production.up.railway.app/webhook',
@@ -64,10 +65,15 @@ app.post('/criar-pagamento', async (req, res) => {
       }
     );
 
+    console.log('Pagamento criado:', preferencia.data.id);
     res.json({ link: preferencia.data.init_point });
   } catch (error) {
     console.error('Erro ao criar pagamento:', error.message);
-    res.status(500).json({ error: 'Erro ao criar pagamento' });
+    if (error.response) {
+      console.error('Detalhe MP:', JSON.stringify(error.response.data));
+      console.error('Status MP:', error.response.status);
+    }
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -79,11 +85,7 @@ app.post('/webhook', async (req, res) => {
     if (type !== 'payment') return res.sendStatus(200);
 
     const paymentId = data && data.id;
-
-    if (!paymentId || Number(paymentId) < 0) {
-      console.log('Notificacao de teste recebida, ignorando.');
-      return res.sendStatus(200);
-    }
+    if (!paymentId || Number(paymentId) < 0) return res.sendStatus(200);
 
     let pagamento;
     try {
@@ -92,47 +94,31 @@ app.post('/webhook', async (req, res) => {
         { headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` } }
       );
     } catch (err) {
-      console.log(`Pagamento ${paymentId} nao encontrado — pode ser teste.`);
+      console.log(`Pagamento ${paymentId} nao encontrado.`);
       return res.sendStatus(200);
     }
 
     const { status, payer } = pagamento.data;
-    console.log(`Pagamento ${paymentId} — status: ${status}`);
-
     if (status !== 'approved') return res.sendStatus(200);
-
-    const emailCliente = payer.email;
 
     await transporter.sendMail({
       from: `"Pra Sempre Pai" <${process.env.EMAIL_USER}>`,
-      to: emailCliente,
-      subject: 'Pagamento confirmado! Agora crie a pagina do seu pai',
+      to: payer.email,
+      subject: 'Pagamento confirmado! Crie a pagina do seu pai',
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:2rem;color:#1A1612;">
-          <h2 style="font-size:22px;margin-bottom:1rem;">Pagamento confirmado!</h2>
-          <p style="color:#6B6560;line-height:1.7;margin-bottom:1.5rem;">
-            Recebemos o seu pagamento com sucesso. Agora e hora de criar a pagina especial para o seu pai.
-          </p>
+          <h2>Pagamento confirmado!</h2>
+          <p style="color:#6B6560;">Clique abaixo para criar a pagina do seu pai:</p>
           <a href="https://tally.so/r/Xxg5Eg"
             style="display:inline-block;background:#1A1612;color:#fff;text-decoration:none;
-            padding:12px 28px;border-radius:10px;font-size:15px;font-weight:500;margin-bottom:1.5rem;">
+            padding:12px 28px;border-radius:10px;font-size:15px;font-weight:500;">
             Criar a pagina do meu pai
           </a>
-          <p style="font-size:13px;color:#A39E99;line-height:1.7;">
-            Apos preencher o formulario, voce recebera o link da pagina em breve.
-            Qualquer duvida, responda esse e-mail.
-          </p>
-          <hr style="border:none;border-top:1px solid #eee;margin:1.5rem 0;">
-          <p style="font-size:12px;color:#A39E99;">
-            Pra Sempre Pai - Seus dados estao protegidos conforme a LGPD.
-          </p>
         </div>
       `,
     });
 
-    console.log(`E-mail enviado para ${emailCliente}`);
     res.sendStatus(200);
-
   } catch (error) {
     console.error('Erro no webhook:', error.message);
     res.sendStatus(500);
@@ -143,7 +129,7 @@ app.post('/gerar-pagina', async (req, res) => {
   try {
     const { emailCliente } = req.body;
     const paginaId = Math.random().toString(36).slice(2, 8);
-    const linkPagina = `https://dia-dos-pais-virid.vercel.app/p/${paginaId}`;
+    const linkPagina = `https://dia-dos-pais-html-atualizado.vercel.app/p/${paginaId}`;
 
     await transporter.sendMail({
       from: `"Pra Sempre Pai" <${process.env.EMAIL_USER}>`,
@@ -151,34 +137,24 @@ app.post('/gerar-pagina', async (req, res) => {
       subject: 'A pagina do seu pai esta pronta!',
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:2rem;color:#1A1612;">
-          <h2 style="font-size:22px;margin-bottom:1rem;">A pagina esta pronta!</h2>
-          <p style="color:#6B6560;line-height:1.7;margin-bottom:1rem;">
-            Copie o link abaixo e envie para o seu pai no Dia dos Pais:
-          </p>
-          <div style="background:#FDF6E7;border:1px solid #F0D89A;border-radius:10px;
-            padding:1rem;font-family:monospace;font-size:14px;color:#C8973A;
-            word-break:break-all;margin-bottom:1.5rem;">
+          <h2>A pagina esta pronta!</h2>
+          <div style="background:#FDF6E7;border-radius:10px;padding:1rem;margin:1rem 0;
+            font-family:monospace;color:#C8973A;word-break:break-all;">
             ${linkPagina}
           </div>
           <a href="${linkPagina}"
             style="display:inline-block;background:#1A1612;color:#fff;text-decoration:none;
-            padding:12px 28px;border-radius:10px;font-size:15px;font-weight:500;margin-bottom:1.5rem;">
+            padding:12px 28px;border-radius:10px;font-size:15px;font-weight:500;">
             Ver a pagina do meu pai
           </a>
-          <hr style="border:none;border-top:1px solid #eee;margin:1.5rem 0;">
-          <p style="font-size:12px;color:#A39E99;">
-            Pra Sempre Pai - Seus dados estao protegidos conforme a LGPD.
-          </p>
         </div>
       `,
     });
 
-    console.log(`Pagina gerada: ${linkPagina} para ${emailCliente}`);
     res.json({ success: true, link: linkPagina });
-
   } catch (error) {
     console.error('Erro ao gerar pagina:', error.message);
-    res.status(500).json({ error: 'Erro ao gerar pagina' });
+    res.status(500).json({ error: error.message });
   }
 });
 
